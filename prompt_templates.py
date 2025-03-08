@@ -22,6 +22,19 @@ When responding:
 You MUST NEVER make up or generate information not contained in the CONTEXT.
 """
 
+# System prompt for fallback mode when no relevant docs found - allows general knowledge
+FALLBACK_SYSTEM_PROMPT = """
+You are an IT Support Assistant with general knowledge capabilities.
+
+Important instructions:
+1. You are responding to a query where NO RELEVANT INFORMATION was found in the knowledge base
+2. Begin your response with "I don't have specific information about this in my knowledge base, but I can provide a general answer:"
+3. After this disclaimer, provide a helpful general response using your built-in knowledge
+4. Be concise but informative
+5. Be accurate and helpful even when answering from general knowledge
+6. If it's a complex technical or domain-specific query that really should have documentation, note that the user might want to add relevant documentation to the knowledge base
+"""
+
 def format_context_from_docs(documents):
     """
     Format a list of documents from ChromaDB into a context string for the prompt.
@@ -44,6 +57,7 @@ def format_context_from_docs(documents):
 def create_support_prompt(query, documents, conversation_history=None):
     """
     Create a complete prompt for the support assistant with context and conversation history.
+    Uses strict adherence to provided context.
     
     Args:
         query (str): The user's current question
@@ -79,7 +93,34 @@ def create_support_prompt(query, documents, conversation_history=None):
     
     return messages
 
-# Removed the fallback_prompt function since we won't use it
+def create_fallback_prompt(query, conversation_history=None):
+    """
+    Create a prompt for the fallback mode that allows general knowledge.
+    Used when no relevant documents are found in the database.
+    
+    Args:
+        query (str): The user's current question
+        conversation_history (list, optional): Previous conversation messages
+    
+    Returns:
+        list: List of message dictionaries for the OpenAI API
+    """
+    # Start with the fallback system message
+    messages = [
+        {"role": "system", "content": FALLBACK_SYSTEM_PROMPT}
+    ]
+    
+    # Add conversation history if provided
+    if conversation_history and len(conversation_history) > 0:
+        # Take only the last N messages based on config
+        history = conversation_history[-config.MAX_CONVERSATION_HISTORY:]
+        for msg in history:
+            messages.append(msg)
+    
+    # Add the current query
+    messages.append({"role": "user", "content": query})
+    
+    return messages
 
 # Test function
 if __name__ == "__main__":
@@ -94,12 +135,21 @@ if __name__ == "__main__":
     print(formatted_context)
     print("\n" + "-"*50 + "\n")
     
-    # Test prompt creation
+    # Test strict prompt creation
     test_query = "How do I add someone to a shared mailbox?"
     test_messages = create_support_prompt(test_query, test_docs)
     
-    print("Complete Prompt Example:")
+    print("Strict Prompt Example:")
     for msg in test_messages:
+        print(f"[{msg['role']}]")
+        print(msg['content'])
+        print("-"*30)
+    
+    # Test fallback prompt creation
+    fallback_messages = create_fallback_prompt(test_query)
+    
+    print("\nFallback Prompt Example:")
+    for msg in fallback_messages:
         print(f"[{msg['role']}]")
         print(msg['content'])
         print("-"*30)
