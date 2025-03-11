@@ -20,6 +20,10 @@ class ChatBridge(QObject):
     conversationUnpinned = pyqtSignal(str, arguments=['conversationId'])
     pinOrderUpdated = pyqtSignal()
     
+    # New signals for main vs favorite tabs
+    addToFavorites = pyqtSignal(str, str, int, arguments=['conversationId', 'title', 'pinOrder'])
+    removeFromFavorites = pyqtSignal(str, arguments=['conversationId'])
+    
     def __init__(self):
         QObject.__init__(self)
         self.conversations = {}
@@ -66,11 +70,16 @@ class ChatBridge(QObject):
                 
                 # Emit signals for each conversation to populate the UI
                 for conv_id, conv_data in self.conversations.items():
-                    self.conversationCreated.emit(conv_id, conv_data.get("title", "New Chat"))
+                    title = conv_data.get("title", "New Chat")
                     
-                    # Emit pinned status if applicable
+                    # Check if conversation is pinned (favorite)
                     if conv_data.get("pinned", False):
-                        self.conversationPinned.emit(conv_id, conv_data.get("pinOrder", 0))
+                        # Add to favorites tab
+                        pin_order = conv_data.get("pinOrder", 0)
+                        self.addToFavorites.emit(conv_id, title, pin_order)
+                    else:
+                        # Add to main tab
+                        self.conversationCreated.emit(conv_id, title)
             else:
                 self.conversations = {
                     "default": {
@@ -172,7 +181,7 @@ class ChatBridge(QObject):
             self.save_conversations()
             print(f"Renamed conversation {conversation_id} to '{new_title}'")
     
-    # Slot to pin a conversation
+    # Slot to pin a conversation (move to favorites)
     @pyqtSlot(str)
     def pinConversation(self, conversation_id):
         if conversation_id in self.conversations:
@@ -191,10 +200,15 @@ class ChatBridge(QObject):
             
             # Save and notify UI
             self.save_conversations()
-            self.conversationPinned.emit(conversation_id, pin_order)
+            
+            # Signal to remove from main list and add to favorites
+            title = self.conversations[conversation_id].get("title", "New Chat")
+            self.conversationPinned.emit(conversation_id, pin_order)  # For backward compatibility
+            self.addToFavorites.emit(conversation_id, title, pin_order)  # Add to favorites tab
+            
             print(f"Pinned conversation: {conversation_id}")
     
-    # Slot to unpin a conversation
+    # Slot to unpin a conversation (move to main)
     @pyqtSlot(str)
     def unpinConversation(self, conversation_id):
         if conversation_id in self.conversations:
@@ -212,7 +226,13 @@ class ChatBridge(QObject):
             
             # Save and notify UI
             self.save_conversations()
-            self.conversationUnpinned.emit(conversation_id)
+            
+            # Signal to remove from favorites and add to main
+            title = self.conversations[conversation_id].get("title", "New Chat")
+            self.conversationUnpinned.emit(conversation_id)  # For backward compatibility
+            self.removeFromFavorites.emit(conversation_id)  # Remove from favorites tab
+            self.conversationCreated.emit(conversation_id, title)  # Add to main tab
+            
             print(f"Unpinned conversation: {conversation_id}")
     
     # Slot to update the order of pinned conversations
@@ -252,7 +272,9 @@ class ChatBridge(QObject):
     def deleteConversation(self, conversation_id):
         if conversation_id in self.conversations:
             # Check if pinned
-            if self.conversations[conversation_id].get("pinned", False):
+            is_pinned = self.conversations[conversation_id].get("pinned", False)
+            
+            if is_pinned:
                 # Remove from pinned list
                 self.pinned_conversations = [p for p in self.pinned_conversations if p["id"] != conversation_id]
                 
@@ -260,14 +282,37 @@ class ChatBridge(QObject):
                 for i, item in enumerate(self.pinned_conversations):
                     self.conversations[item["id"]]["pinOrder"] = i
                     item["order"] = i
+                    
+                # Signal to remove from favorites tab
+                self.removeFromFavorites.emit(conversation_id)
+            else:
+                # Signal to remove from main tab
+                self.conversationDeleted.emit(conversation_id)
             
             # Remove from conversations dict
             del self.conversations[conversation_id]
             
-            # Save and notify UI
+            # Save changes
             self.save_conversations()
-            self.conversationDeleted.emit(conversation_id)
+            
             print(f"Deleted conversation: {conversation_id}")
+            
+            # Handle active conversation change if needed
+            if self.active_conversation_id == conversation_id:
+                self._select_new_active_conversation()
+    
+    # Helper to select a new active conversation after deletion
+    def _select_new_active_conversation(self):
+        # Find any conversation to make active
+        if self.conversations:
+            # Try to select any conversation
+            new_id = next(iter(self.conversations.keys()))
+            self.active_conversation_id = new_id
+            self.switchConversation(new_id)
+        else:
+            # No conversations left, create a default one
+            self.createNewConversation("default")
+            self.active_conversation_id = "default"
     
     # Slot to switch between conversations
     @pyqtSlot(str)
@@ -276,7 +321,20 @@ class ChatBridge(QObject):
             self.active_conversation_id = conversation_id
             reset_conversation(conversation_id)  # Reset the conversation state in qa_tool
             
-            # Rebuild conversation history in qa_tool
+            # Load messages into chat
+            chatModel = []
+            if "messages" in self.conversations[conversation_id]:
+                for msg in self.conversations[conversation_id]["messages"]:
+                    # Convert from role-based to isUser-based format
+                    if "role" in msg and "content" in msg:
+                        chatModel.append({
+                            "message": msg["content"],
+                            "isUser": msg["role"] == "user"
+                        })
+                    # Handle messages already in isUser format
+                    elif "message" in msg and "isUser" in msg:
+                        chatModel.append(msg)
+            
             print(f"Switched to conversation: {conversation_id}")
     
     # Slot to handle the upload button click - opens file dialog directly
