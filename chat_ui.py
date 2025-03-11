@@ -24,6 +24,9 @@ class ChatBridge(QObject):
     addToFavorites = pyqtSignal(str, str, int, arguments=['conversationId', 'title', 'pinOrder'])
     removeFromFavorites = pyqtSignal(str, arguments=['conversationId'])
     
+    # New signal for document processing notifications
+    documentProcessed = pyqtSignal(str, bool, int, str, arguments=['filename', 'success', 'chunks', 'error'])
+    
     def __init__(self):
         QObject.__init__(self)
         self.conversations = {}
@@ -390,12 +393,35 @@ class ChatBridge(QObject):
                         if result["success"]:
                             processed_count += 1
                             print(f"Document processed: {result['filename']} ({result['chunks']} chunks)")
+                            # Emit signal for successful processing
+                            self.documentProcessed.emit(
+                                result['filename'], 
+                                True, 
+                                result['chunks'],
+                                ""
+                            )
                         else:
                             failed_count += 1
-                            print(f"Failed to process document: {result['error']}")
+                            error_msg = result.get('error', 'Unknown error')
+                            print(f"Failed to process document: {error_msg}")
+                            # Emit signal for failed processing
+                            self.documentProcessed.emit(
+                                os.path.basename(file_path), 
+                                False, 
+                                0,
+                                error_msg
+                            )
                     except Exception as e:
                         failed_count += 1
-                        print(f"Error processing file {file_path}: {str(e)}")
+                        error_msg = str(e)
+                        print(f"Error processing file {file_path}: {error_msg}")
+                        # Emit signal for exception
+                        self.documentProcessed.emit(
+                            os.path.basename(file_path), 
+                            False, 
+                            0,
+                            error_msg
+                        )
                 
                 # Print summary to console
                 print(f"Processing complete: {processed_count} files added, {failed_count} failed")
