@@ -1,6 +1,8 @@
 ﻿import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import "Utils.js" as Utils
+import "./"
 
 ApplicationWindow {
     id: window
@@ -10,106 +12,61 @@ ApplicationWindow {
     title: "QA Chatbot"
     color: "#1E1E1E"
     
+    // Global properties
     property bool isLoading: false
     property string activeConversationId: "default"
     property var conversations: {"default": {title: "New Chat", messages: []}}
     property string editingConversationId: ""
     property int currentSidebarTab: 0  // 0 = Main, 1 = Favorites
     
-    Rectangle {
+    // Debug logging
+    function logDebug(message) {
+        Utils.log("MainWindow", message);
+    }
+    
+    Component.onCompleted: {
+        logDebug("Application window initialized");
+        logDebug("Initial state - activeConversationId: " + activeConversationId);
+        logDebug("Initial conversations: " + JSON.stringify(Object.keys(conversations)));
+        
+        // Make sure default conversation is properly set up
+        if (conversations["default"]) {
+            // Notify sidebar to add the default conversation at init time
+            logDebug("Adding default conversation to sidebar");
+            chatBridge.conversationCreated("default", conversations["default"].title || "New Chat");
+        }
+    }
+    
+    // Options popup for conversation menu
+    OptionsPopup {
         id: optionsPopup
-        width: 120
-        height: 110
-        color: "#333333"
-        radius: 5
-        visible: false
-        z: 100
+        debug: true
         
-        property string convId: ""
-        property string convTitle: ""
-        property bool convPinned: false
+        onPopupHidden: {
+            outsideClickArea.visible = false;
+            logDebug("Popup hidden");
+        }
         
-        Column {
-            anchors.fill: parent
-            anchors.margins: 5
-            spacing: 2
-            
-            Rectangle {
-                width: parent.width
-                height: 30
-                color: pinMouseArea.containsMouse ? "#444444" : "#333333"
-                radius: 3
-                
-                Text {
-                    id: pinText
-                    text: optionsPopup.convPinned ? "Unfavorite" : "Favorite"
-                    color: "white"
-                    anchors.centerIn: parent
-                    font.pixelSize: 14
-                }
-                
-                MouseArea {
-                    id: pinMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        optionsPopup.visible = false
-                        if (optionsPopup.convPinned) {
-                            chatBridge.unpinConversation(optionsPopup.convId)
-                        } else {
-                            chatBridge.pinConversation(optionsPopup.convId)
-                        }
-                    }
-                }
+        onPinClicked: function(convId, isPinned) {
+            logDebug("Pin clicked: " + convId + " (isPinned: " + isPinned + ")");
+            if (isPinned) {
+                chatBridge.unpinConversation(convId);
+            } else {
+                chatBridge.pinConversation(convId);
             }
+        }
+        
+        onRenameClicked: function(convId) {
+            logDebug("Rename clicked in options popup: " + convId);
             
-            Rectangle {
-                width: parent.width
-                height: 30
-                color: renameMouseArea.containsMouse ? "#444444" : "#333333"
-                radius: 3
-                
-                Text {
-                    text: "Rename"
-                    color: "white"
-                    anchors.centerIn: parent
-                    font.pixelSize: 14
-                }
-                
-                MouseArea {
-                    id: renameMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        optionsPopup.visible = false
-                        editingConversationId = optionsPopup.convId
-                    }
-                }
-            }
-            
-            Rectangle {
-                width: parent.width
-                height: 30
-                color: deleteMouseArea.containsMouse ? "#444444" : "#333333"
-                radius: 3
-                
-                Text {
-                    text: "Delete"
-                    color: "white"
-                    anchors.centerIn: parent
-                    font.pixelSize: 14
-                }
-                
-                MouseArea {
-                    id: deleteMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        optionsPopup.visible = false
-                        chatBridge.deleteConversation(optionsPopup.convId)
-                    }
-                }
-            }
+            // Instead of setting editingConversationId property, directly activate edit mode
+            var success = sidebarView.editConversation(convId);
+            logDebug("Direct edit activation result: " + success);
+        }
+        
+        onDeleteClicked: function(convId) {
+            logDebug("Delete clicked: " + convId);
+            chatBridge.deleteConversation(convId);
         }
     }
     
@@ -117,805 +74,380 @@ ApplicationWindow {
     MouseArea {
         id: outsideClickArea
         anchors.fill: parent
-        visible: optionsPopup.visible
+        visible: false
         z: 99
         onClicked: {
-            optionsPopup.visible = false
+            logDebug("Outside area clicked");
+            optionsPopup.visible = false;
+            optionsPopup.popupHidden();
         }
     }
     
+    // Main layout
     RowLayout {
         anchors.fill: parent
         spacing: 0
         
-        Rectangle {
+        // Sidebar on the left
+        SidebarView {
+            id: sidebarView
             Layout.preferredWidth: 250
             Layout.fillHeight: true
-            color: "#252525"
+            debug: true
+            activeConversationId: window.activeConversationId
+            editingConversationId: window.editingConversationId
+            currentSidebarTab: window.currentSidebarTab
             
-            Rectangle {
-                id: sidebarHeader
-                width: parent.width
-                height: 50
-                color: "#333333"
+            onCurrentSidebarTabChanged: {
+                window.currentSidebarTab = currentSidebarTab;
+                logDebug("Tab changed to: " + currentSidebarTab);
+            }
+            
+            onConversationSelected: function(convId) {
+                logDebug("Conversation selected: " + convId);
                 
-                // Tabs for Main and Favorites
-                Item {
-                    anchors.fill: parent
+                // Clear editing state when selecting a conversation
+                if (editingConversationId !== "") {
+                    logDebug("Clearing editing state on conversation selection");
+                    editingConversationId = "";
+                }
+                
+                if (activeConversationId !== convId) {
+                    activeConversationId = convId;
+                    logDebug("Set activeConversationId to: " + activeConversationId);
                     
-                    Rectangle {
-                        id: mainTab
-                        width: parent.width / 2
-                        height: parent.height
-                        color: currentSidebarTab === 0 ? "#3C3C3C" : "transparent"
-                        radius: 8
-                        
-                        // Remove radius on the right side
-                        Rectangle {
-                            width: parent.radius
-                            height: parent.radius
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            color: currentSidebarTab === 0 ? "#3C3C3C" : "#333333"
-                        }
-                        
-                        Rectangle {
-                            width: parent.radius
-                            height: parent.radius
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            color: currentSidebarTab === 0 ? "#3C3C3C" : "#333333"
-                        }
-                        
-                        Text {
-                            text: "Main"
-                            color: "white"
-                            anchors.centerIn: parent
-                            font.pixelSize: 14
-                        }
-                        
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: currentSidebarTab = 0
-                        }
+                    // Load messages for this conversation
+                    logDebug("Loading messages for conversation: " + convId);
+                    chatView.clearChat();
+                    if (conversations[convId] && conversations[convId].messages) {
+                        chatView.loadMessages(conversations[convId].messages);
+                        logDebug("Loaded " + conversations[convId].messages.length + " messages");
+                    } else {
+                        logDebug("No messages found for conversation: " + convId);
                     }
                     
-                    Rectangle {
-                        id: favoritesTab
-                        width: parent.width / 2
-                        height: parent.height
-                        anchors.right: parent.right
-                        color: currentSidebarTab === 1 ? "#3C3C3C" : "transparent"
-                        radius: 8
-                        
-                        // Remove radius on the left side
-                        Rectangle {
-                            width: parent.radius
-                            height: parent.radius
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            color: currentSidebarTab === 1 ? "#3C3C3C" : "#333333"
-                        }
-                        
-                        Rectangle {
-                            width: parent.radius
-                            height: parent.radius
-                            anchors.left: parent.left
-                            anchors.bottom: parent.bottom
-                            color: currentSidebarTab === 1 ? "#3C3C3C" : "#333333"
-                        }
-                        
-                        Text {
-                            text: "Favorites"
-                            color: "white"
-                            anchors.centerIn: parent
-                            font.pixelSize: 14
-                        }
-                        
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: currentSidebarTab = 1
-                        }
-                    }
+                    chatBridge.switchConversation(convId);
                 }
             }
             
-            // Main content area with ListView or Favorites ListView
-            Item {
-                anchors.top: sidebarHeader.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: sidebarFooter.top
-                anchors.margins: 5
+            onCreateNewConversation: {
+                var newId = Utils.generateConversationId();
+                logDebug("Creating new conversation: " + newId);
                 
-                // Main tab content - regular conversations
-                ListView {
-                    id: mainConversationList
-                    anchors.fill: parent
-                    clip: true
-                    spacing: 5
-                    visible: currentSidebarTab === 0
-                    cacheBuffer: 100 // Increase cache buffer to reduce repaints
-                    
-                    model: ListModel { id: mainConversationsModel }
-                    
-                    delegate: conversationItem
-                    
-                    // Empty state message
-                    Item {
-                        anchors.fill: parent
-                        visible: mainConversationsModel.count === 0 && currentSidebarTab === 0
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "No conversations yet"
-                            color: "#888888"
-                            font.pixelSize: 14
-                        }
-                    }
-                    
-                    Component.onCompleted: {
-                        mainConversationsModel.append({
-                            convId: "default", 
-                            title: "New Chat", 
-                            pinned: false, 
-                            pinOrder: -1
-                        })
-                    }
-                }
+                // Create conversation in local model
+                conversations[newId] = {title: "New Chat", messages: []};
+                logDebug("Added to local conversations object");
                 
-                // Favorites tab content - pinned conversations
-                ListView {
-                    id: favoritesConversationList
-                    anchors.fill: parent
-                    clip: true
-                    spacing: 5
-                    visible: currentSidebarTab === 1
-                    cacheBuffer: 100 // Increase cache buffer to reduce repaints
-                    
-                    model: ListModel { id: favoritesConversationsModel }
-                    
-                    delegate: conversationItem
-                    
-                    // Empty state message
-                    Item {
-                        anchors.fill: parent
-                        visible: favoritesConversationsModel.count === 0 && currentSidebarTab === 1
-                        
-                        Text {
-                            anchors.centerIn: parent
-                            text: "No favorites yet"
-                            color: "#888888"
-                            font.pixelSize: 14
-                        }
-                    }
-                }
+                activeConversationId = newId;
+                logDebug("Set activeConversationId to: " + activeConversationId);
+                
+                // Clear the chat view
+                chatView.clearChat();
+                logDebug("Cleared chat view");
+                
+                // Inform backend - this will trigger onConversationCreated which adds to sidebar
+                chatBridge.createNewConversation(newId);
+                
+                // Switch to Main tab when creating a new conversation
+                currentSidebarTab = 0;
+                logDebug("Switched to Main tab");
             }
             
-            Rectangle {
-                id: sidebarFooter
-                width: parent.width
-                height: 50
-                color: "#252525"
-                anchors.bottom: parent.bottom
+            onPinConversation: function(convId) {
+                logDebug("Pin conversation: " + convId);
+                chatBridge.pinConversation(convId);
+            }
+            
+            onUnpinConversation: function(convId) {
+                logDebug("Unpin conversation: " + convId);
+                chatBridge.unpinConversation(convId);
+            }
+            
+            onRenameConversation: function(convId, newTitle) {
+                logDebug("Rename conversation: " + convId + " to: " + newTitle);
                 
-                // New Chat button moved to the footer
-                Button {
-                    text: "New Chat"
-                    width: parent.width - 20
-                    height: 36
-                    anchors.centerIn: parent
-                    
-                    background: Rectangle {
-                        color: "#007ACC"
-                        radius: 5
-                    }
-                    
-                    contentItem: Text {
-                        text: parent.text
-                        color: "white"
-                        font.pixelSize: 14
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    
-                    onClicked: {
-                        var newId = "conv-" + Math.floor(Math.random() * 1000000)
-                        conversations[newId] = {title: "New Chat", messages: []}
-                        activeConversationId = newId
-                        chatModel.clear()
-                        chatBridge.createNewConversation(newId)
-                        // Switch to Main tab when creating a new conversation
-                        currentSidebarTab = 0
-                    }
+                // Update in our local data
+                if (conversations[convId]) {
+                    var oldTitle = conversations[convId].title;
+                    conversations[convId].title = newTitle;
+                    logDebug("Updated title in conversations object: '" + oldTitle + "' → '" + newTitle + "'");
+                } else {
+                    logDebug("Warning: Conversation not found in local data: " + convId);
                 }
+                
+                // Update in bridge
+                chatBridge.renameConversation(convId, newTitle);
+                logDebug("Sent rename command to chatBridge");
+                
+                // Clear editing state
+                editingConversationId = "";
+                logDebug("Cleared editingConversationId");
+                
+                // Explicitly update the conversation title in UI
+                sidebarView.updateConversationTitle(convId, newTitle);
+                logDebug("Called updateConversationTitle on sidebar");
+                
+                // Force refresh after renaming
+                sidebarView.forceRefresh();
+                logDebug("Forced UI refresh after rename");
+            }
+            
+            onMenuClicked: function(convId, title, isPinned, x, y) {
+                logDebug("Menu clicked for: " + convId);
+                optionsPopup.showPopup(convId, title, isPinned, x, y);
+                outsideClickArea.visible = true;
             }
         }
         
-        Rectangle {
+        // Chat view on the right
+        ChatView {
+            id: chatView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#1E1E1E"
+            debug: true
+            isLoading: window.isLoading
+            activeConversationId: window.activeConversationId
             
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
+            onSendMessage: function(message, conversationId) {
+                logDebug("Sending message: " + message + " for conversation: " + conversationId);
                 
-                // Reset Conversation button moved to top right
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 36
-                    color: "#1E1E1E"
-                    
-                    Button {
-                        text: "Reset Conversation"
-                        width: 150
-                        height: 30
-                        anchors.right: parent.right
-                        anchors.rightMargin: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        
-                        background: Rectangle {
-                            color: "#555555"
-                            radius: 5
-                        }
-                        
-                        contentItem: Text {
-                            text: parent.text
-                            color: "white"
-                            font.pixelSize: 12
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        onClicked: {
-                            chatBridge.resetConversation()
-                        }
-                    }
+                // Add to local conversations store
+                if (!conversations[conversationId]) {
+                    logDebug("Creating new conversation entry for: " + conversationId);
+                    conversations[conversationId] = {title: "New Chat", messages: []};
                 }
                 
-                ScrollView {
-                    id: scrollView
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
+                var userMessage = {
+                    "message": message,
+                    "isUser": true
+                };
+                
+                conversations[conversationId].messages.push(userMessage);
+                logDebug("Added user message to conversations object");
+                
+                // If this is the first message, use it as the conversation title
+                if (conversations[conversationId].messages.length === 1) {
+                    logDebug("First message, creating title from message");
+                    var newTitle = Utils.formatConversationTitle(message);
+                    var oldTitle = conversations[conversationId].title;
+                    conversations[conversationId].title = newTitle;
+                    logDebug("Set title in conversations object: '" + oldTitle + "' → '" + newTitle + "'");
                     
-                    ListView {
-                        id: chatListView
-                        anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 10
-                        model: ListModel { id: chatModel }
-                        delegate: ChatBubble { 
-                            width: chatListView.width - 20
-                            messageText: message
-                            isUserMessage: isUser
-                        }
-                        
-                        onCountChanged: {
-                            chatListView.positionViewAtEnd()
-                        }
-                    }
+                    // Update in the model and UI
+                    sidebarView.updateConversationTitle(conversationId, newTitle);
+                    logDebug("Updated title in sidebar");
+                    
+                    // Also update through bridge to ensure persistence
+                    chatBridge.renameConversation(conversationId, newTitle);
+                    logDebug("Sent rename to chatBridge");
+                    
+                    // Force UI refresh
+                    sidebarView.forceRefresh();
+                    logDebug("Forced UI refresh after title update");
                 }
                 
-                Item {
-                    Layout.fillWidth: true
-                    height: 30
-                    visible: isLoading
-                    
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 5
-                        
-                        Text {
-                            text: "Thinking"
-                            color: "#CCCCCC"
-                            font.pixelSize: 14
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        
-                        Text {
-                            id: loadingDots
-                            text: "..."
-                            color: "#CCCCCC"
-                            font.pixelSize: 14
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        
-                        Timer {
-                            interval: 500
-                            running: isLoading
-                            repeat: true
-                            property int dotCount: 0
-                            onTriggered: {
-                                dotCount = (dotCount + 1) % 4;
-                                var dots = "";
-                                for (var i = 0; i < dotCount; i++) {
-                                    dots += ".";
-                                }
-                                loadingDots.text = dots;
-                            }
-                        }
-                    }
-                }
-                
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: "#333333"
-                }
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: 10
-                    spacing: 10
-                    
-                    Button {
-                        id: attachButton
-                        Layout.preferredWidth: 40
-                        height: 40
-                        enabled: !isLoading
-                        
-                        background: Rectangle {
-                            color: "#333333"
-                            radius: 5
-                        }
-                        
-                        contentItem: Text {
-                            text: "+"
-                            color: "white"
-                            font.pixelSize: 18
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        onClicked: {
-                            chatBridge.openFileDialog()
-                        }
-                        
-                        ToolTip {
-                            visible: parent.hovered
-                            text: "Upload document"
-                            delay: 500
-                        }
-                    }
-                    
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 40
-                        color: "#333333"
-                        radius: 5
-                        
-                        TextInput {
-                            id: messageInput
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            color: "white"
-                            font.pixelSize: 14
-                            clip: true
-                            focus: true
-                            enabled: !isLoading
-                            
-                            Text {
-                                anchors.fill: parent
-                                text: "Type your message..."
-                                color: "#888888"
-                                font.pixelSize: 14
-                                visible: !messageInput.text && !messageInput.activeFocus
-                            }
-                            
-                            Keys.onReturnPressed: {
-                                if (!isLoading) {
-                                    sendButton.clicked()
-                                }
-                            }
-                        }
-                    }
-                    
-                    Button {
-                        id: sendButton
-                        text: "Send"
-                        height: 40
-                        Layout.preferredWidth: 80
-                        enabled: !isLoading && messageInput.text.trim() !== ""
-                        
-                        background: Rectangle {
-                            color: sendButton.enabled ? "#007ACC" : "#555555"
-                            radius: 5
-                        }
-                        
-                        contentItem: Text {
-                            text: sendButton.text
-                            color: "white"
-                            font.pixelSize: 14
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        
-                        onClicked: {
-                            if (messageInput.text.trim() !== "") {
-                                var userMessage = {
-                                    "message": messageInput.text,
-                                    "isUser": true
-                                }
-                                
-                                chatModel.append(userMessage)
-                                
-                                if (!conversations[activeConversationId]) {
-                                    conversations[activeConversationId] = {title: "New Chat", messages: []}
-                                }
-                                conversations[activeConversationId].messages.push(userMessage)
-                                
-                                if (conversations[activeConversationId].messages.length === 1) {
-                                    var newTitle = messageInput.text
-                                    if (newTitle.length > 20) {
-                                        newTitle = newTitle.substring(0, 20) + "..."
-                                    }
-                                    conversations[activeConversationId].title = newTitle
-                                    
-                                    // Update title in appropriate model
-                                    updateConversationTitle(activeConversationId, newTitle)
-                                }
-                                
-                                chatBridge.sendMessage(messageInput.text, activeConversationId)
-                                
-                                messageInput.text = ""
-                            }
-                        }
-                    }
-                }
+                // Send to the backend
+                chatBridge.sendMessage(message, conversationId);
+                logDebug("Sent message to chatBridge");
+            }
+            
+            onResetConversation: {
+                logDebug("Resetting conversation");
+                chatBridge.resetConversation();
+            }
+            
+            onUploadDocument: {
+                logDebug("Opening file dialog");
+                chatBridge.openFileDialog();
             }
         }
     }
     
-    // Reusable component for conversation items
-    Component {
-        id: conversationItem
-        
-        Rectangle {
-            width: ListView.view.width
-            height: 50
-            color: activeConversationId === convId ? "#3C3C3C" : "#252525"
-            radius: 5
-            
-            // Get pin status directly from the model item
-            property bool isPinned: pinned
-            
-            Text {
-                id: pinIcon
-                width: 24
-                height: 24
-                anchors.left: parent.left
-                anchors.leftMargin: 8
-                anchors.verticalCenter: parent.verticalCenter
-                text: isPinned ? "★" : "☆"  
-                color: isPinned ? "#FFFFFF" : "#888888"
-                font.pixelSize: 18
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: {
-                        if (isPinned) {
-                            chatBridge.unpinConversation(convId)
-                        } else {
-                            chatBridge.pinConversation(convId)
-                        }
-                    }
-                }
-            }
-            
-            Text {
-                id: titleText
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: pinIcon.right
-                anchors.leftMargin: 8
-                anchors.right: menuButton.left
-                anchors.rightMargin: 5
-                text: title
-                color: "white"
-                font.pixelSize: 14
-                elide: Text.ElideRight
-                visible: editingConversationId !== convId
-            }
-            
-            TextField {
-                id: titleEditField
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.left: pinIcon.right
-                anchors.leftMargin: 8
-                anchors.right: menuButton.left
-                anchors.rightMargin: 5
-                text: title
-                color: "white"
-                font.pixelSize: 14
-                visible: editingConversationId === convId
-                background: Rectangle {
-                    color: "#333333"
-                    radius: 3
-                }
-                
-                onVisibleChanged: {
-                    if (visible) {
-                        forceActiveFocus()
-                        selectAll()
-                    }
-                }
-                
-                Keys.onReturnPressed: {
-                    saveNewTitle()
-                }
-                
-                Keys.onEscapePressed: {
-                    editingConversationId = ""
-                }
-                
-                onActiveFocusChanged: {
-                    if (!activeFocus && editingConversationId === convId) {
-                        saveNewTitle()
-                    }
-                }
-                
-                function saveNewTitle() {
-                    var newTitle = text.trim()
-                    if (newTitle) {
-                        updateConversationTitle(convId, newTitle)
-                        
-                        if (conversations[convId]) {
-                            conversations[convId].title = newTitle
-                        }
-                        
-                        chatBridge.renameConversation(convId, newTitle)
-                    }
-                    
-                    editingConversationId = ""
-                }
-            }
-            
-            Rectangle {
-                id: menuButton
-                width: 30
-                height: 30
-                anchors.right: parent.right
-                anchors.rightMargin: 5
-                anchors.verticalCenter: parent.verticalCenter
-                color: "transparent"
-                radius: 4
-                
-                Column {
-                    spacing: 3
-                    anchors.centerIn: parent
-                    
-                    Repeater {
-                        model: 3
-                        Rectangle {
-                            width: 4
-                            height: 4
-                            radius: 2
-                            color: "white"
-                        }
-                    }
-                }
-                
-                MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: parent.color = "#3A3A3A"
-                    onExited: parent.color = "transparent"
-                    onClicked: {
-                        optionsPopup.convId = convId
-                        optionsPopup.convTitle = title
-                        optionsPopup.convPinned = pinned
-                        optionsPopup.x = menuButton.mapToItem(window.contentItem, 0, 0).x - optionsPopup.width + menuButton.width
-                        optionsPopup.y = menuButton.mapToItem(window.contentItem, 0, 0).y
-                        optionsPopup.visible = true
-                    }
-                }
-            }
-            
-            MouseArea {
-                anchors.fill: parent
-                anchors.rightMargin: menuButton.width + pinIcon.width + 10
-                anchors.leftMargin: pinIcon.width + 5
-                
-                onClicked: {
-                    editingConversationId = ""
-                    
-                    if (activeConversationId !== convId) {
-                        activeConversationId = convId
-                        chatModel.clear()
-                        if (conversations[convId] && conversations[convId].messages) {
-                            for (var i = 0; i < conversations[convId].messages.length; i++) {
-                                var msg = conversations[convId].messages[i]
-                                chatModel.append(msg)
-                            }
-                        }
-                        chatBridge.switchConversation(convId)
-                    }
-                }
-            }
-        }
-    }
-    
-    // Helper function to update conversation title in the correct model
-    function updateConversationTitle(id, newTitle) {
-        // Check main model first
-        for (var i = 0; i < mainConversationsModel.count; i++) {
-            if (mainConversationsModel.get(i).convId === id) {
-                mainConversationsModel.setProperty(i, "title", newTitle)
-                return
-            }
-        }
-        
-        // Check favorites model if not found in main
-        for (var j = 0; j < favoritesConversationsModel.count; j++) {
-            if (favoritesConversationsModel.get(j).convId === id) {
-                favoritesConversationsModel.setProperty(j, "title", newTitle)
-                return
-            }
-        }
-    }
-    
-    // Helper function to find model and index for a conversation
-    function findConversationInModels(id) {
-        // Check main model first
-        for (var i = 0; i < mainConversationsModel.count; i++) {
-            if (mainConversationsModel.get(i).convId === id) {
-                return { model: mainConversationsModel, index: i }
-            }
-        }
-        
-        // Check favorites model if not found in main
-        for (var j = 0; j < favoritesConversationsModel.count; j++) {
-            if (favoritesConversationsModel.get(j).convId === id) {
-                return { model: favoritesConversationsModel, index: j }
-            }
-        }
-        
-        return null
-    }
-    
+    // Connections to handle events from ChatBridge
     Connections {
         target: chatBridge
         
         function onNewBotMessage(message, conversationId) {
+            logDebug("New bot message for conversation: " + conversationId);
+            
             if (conversationId === activeConversationId) {
-                var botMessage = {
-                    "message": message,
-                    "isUser": false
-                }
-                chatModel.append(botMessage)
+                chatView.addBotMessage(message);
+                logDebug("Added to chat view");
             }
             
             if (!conversations[conversationId]) {
-                conversations[conversationId] = {title: "New Chat", messages: []}
+                logDebug("Creating new conversation entry for bot message: " + conversationId);
+                conversations[conversationId] = {title: "New Chat", messages: []};
             }
+            
             conversations[conversationId].messages.push({
                 "message": message,
                 "isUser": false
-            })
+            });
+            logDebug("Added bot message to conversations object");
         }
         
         function onUpdateLoadingState(loading) {
-            isLoading = loading
+            logDebug("Loading state changed: " + loading);
+            isLoading = loading;
         }
         
         function onConversationReset() {
-            chatModel.clear()
+            logDebug("Conversation reset for: " + activeConversationId);
+            
+            chatView.clearChat();
             if (conversations[activeConversationId]) {
-                conversations[activeConversationId].messages = []
+                conversations[activeConversationId].messages = [];
+                logDebug("Cleared messages in conversations object");
+            } else {
+                logDebug("Warning: Active conversation not found in local data: " + activeConversationId);
             }
         }
         
         function onConversationCreated(conversationId, title) {
-            // Check if conversation already exists in either model
-            var result = findConversationInModels(conversationId)
-            if (result !== null) {
-                return  // Already exists, don't add again
+            logDebug("Conversation created: " + conversationId + " with title: " + title);
+            
+            // Create in local model if needed
+            if (!conversations[conversationId]) {
+                logDebug("Adding to local conversations object");
+                conversations[conversationId] = {
+                    title: title || "New Chat",
+                    messages: []
+                };
+            } else {
+                logDebug("Conversation already exists in local data");
             }
             
-            // Add to main conversations (non-favorites)
-            mainConversationsModel.append({
-                convId: conversationId,
-                title: title || "New Chat",
-                pinned: false,
-                pinOrder: -1
-            })
+            // Check if already exists in UI
+            var result = sidebarView.findConversation(conversationId);
+            if (result !== null) {
+                logDebug("Conversation already exists in UI, not adding again");
+                return;  // Already exists
+            }
+            
+            logDebug("Adding conversation to sidebar");
+            // Add to main conversations list in sidebar
+            sidebarView.addMainConversation(
+                conversationId,
+                conversations[conversationId].title || title || "New Chat",
+                false,
+                -1
+            );
         }
         
         function onAddToFavorites(conversationId, title, pinOrder) {
-            // Remove from main list if present
-            for (var i = 0; i < mainConversationsModel.count; i++) {
-                if (mainConversationsModel.get(i).convId === conversationId) {
-                    mainConversationsModel.remove(i)
-                    break
-                }
+            logDebug("Adding to favorites: " + conversationId + " with title: " + title);
+            
+            // Update local data
+            if (conversations[conversationId]) {
+                conversations[conversationId].pinned = true;
+                conversations[conversationId].pinOrder = pinOrder;
+                logDebug("Updated pinned state in conversations object");
+            } else {
+                logDebug("Warning: Conversation not found in local data: " + conversationId);
             }
             
-            // Check if already in favorites
-            var existsInFavorites = false
-            for (var j = 0; j < favoritesConversationsModel.count; j++) {
-                if (favoritesConversationsModel.get(j).convId === conversationId) {
-                    existsInFavorites = true
-                    favoritesConversationsModel.setProperty(j, "pinOrder", pinOrder)
-                    break
-                }
-            }
+            // Remove from main if present
+            sidebarView.removeConversation(conversationId);
             
-            // Add to favorites if not already there
-            if (!existsInFavorites) {
-                favoritesConversationsModel.append({
-                    convId: conversationId,
-                    title: title || "New Chat",
-                    pinned: true,
-                    pinOrder: pinOrder
-                })
-            }
+            // Add to favorites
+            sidebarView.addFavoriteConversation(
+                conversationId,
+                conversations[conversationId]?.title || title || "New Chat",
+                true,
+                pinOrder
+            );
             
-            // If this is the active conversation, switch to favorites tab
+            // Switch tab if this is active conversation
             if (activeConversationId === conversationId) {
-                currentSidebarTab = 1  // Switch to Favorites tab
+                logDebug("Active conversation pinned, switching to Favorites tab");
+                currentSidebarTab = 1;  // Switch to Favorites tab
             }
         }
         
         function onRemoveFromFavorites(conversationId) {
-            // Remove from favorites list
-            for (var i = 0; i < favoritesConversationsModel.count; i++) {
-                if (favoritesConversationsModel.get(i).convId === conversationId) {
-                    favoritesConversationsModel.remove(i)
-                    break
-                }
+            logDebug("Removing from favorites: " + conversationId);
+            
+            // Update local data
+            if (conversations[conversationId]) {
+                conversations[conversationId].pinned = false;
+                conversations[conversationId].pinOrder = -1;
+                logDebug("Updated pinned state in conversations object");
+            } else {
+                logDebug("Warning: Conversation not found in local data: " + conversationId);
             }
             
-            // If this is the active conversation, switch to main tab
+            // Remove from favorites list
+            sidebarView.removeConversation(conversationId);
+            
+            // Add to main conversations
+            var title = conversations[conversationId]?.title || "New Chat";
+            sidebarView.addMainConversation(
+                conversationId,
+                title,
+                false,
+                -1
+            );
+            
+            // Switch tab if this is active conversation
             if (activeConversationId === conversationId) {
-                currentSidebarTab = 0  // Switch to Main tab
+                logDebug("Active conversation unpinned, switching to Main tab");
+                currentSidebarTab = 0;  // Switch to Main tab
             }
         }
         
         function onConversationPinned(conversationId, pinOrder) {
-            // This is handled by addToFavorites now, but kept for backward compatibility
+            logDebug("Conversation pinned: " + conversationId + " (backward compatibility)");
+            // This is now handled by onAddToFavorites
         }
         
         function onConversationUnpinned(conversationId) {
-            // This is handled by removeFromFavorites now, but kept for backward compatibility
-        }
-        
-        function onPinOrderUpdated() {
-            // Could add sorting functionality here if needed
+            logDebug("Conversation unpinned: " + conversationId + " (backward compatibility)");
+            // This is now handled by onRemoveFromFavorites
         }
         
         function onConversationDeleted(conversationId) {
-            // Remove from appropriate model
-            var result = findConversationInModels(conversationId)
-            if (result !== null) {
-                result.model.remove(result.index)
-            }
+            logDebug("Conversation deleted: " + conversationId);
             
+            // Remove from view
+            sidebarView.removeConversation(conversationId);
+            
+            // Remove from data store
             if (conversations[conversationId]) {
-                delete conversations[conversationId]
+                delete conversations[conversationId];
+                logDebug("Removed from conversations object");
+            } else {
+                logDebug("Warning: Conversation not found in local data: " + conversationId);
             }
             
+            // Handle case when active conversation is deleted
             if (activeConversationId === conversationId) {
-                // Find new conversation to make active
-                if (mainConversationsModel.count > 0) {
-                    activeConversationId = mainConversationsModel.get(0).convId
-                } else if (favoritesConversationsModel.count > 0) {
-                    activeConversationId = favoritesConversationsModel.get(0).convId
-                    currentSidebarTab = 1  // Switch to Favorites tab
-                } else {
-                    chatBridge.createNewConversation("default")
-                    activeConversationId = "default"
-                    currentSidebarTab = 0  // Switch to Main tab
-                }
+                logDebug("Active conversation was deleted, finding new conversation to activate");
                 
-                // Load chat messages
-                chatModel.clear()
-                if (conversations[activeConversationId] && conversations[activeConversationId].messages) {
-                    for (var j = 0; j < conversations[activeConversationId].messages.length; j++) {
-                        chatModel.append(conversations[activeConversationId].messages[j])
+                // Find any conversation to make active
+                var result = sidebarView.findConversation(null);  // Will find first in main
+                
+                if (result) {
+                    var newActiveId = result.model.get(result.index).convId;
+                    activeConversationId = newActiveId;
+                    logDebug("Set new activeConversationId to: " + activeConversationId);
+                    
+                    chatView.clearChat();
+                    logDebug("Cleared chat view");
+                    
+                    if (conversations[activeConversationId]?.messages) {
+                        chatView.loadMessages(conversations[activeConversationId].messages);
+                        logDebug("Loaded " + conversations[activeConversationId].messages.length + " messages");
                     }
+                    
+                    chatBridge.switchConversation(activeConversationId);
+                } else {
+                    logDebug("No conversations found, creating default conversation");
+                    // No conversations left, create default
+                    chatBridge.createNewConversation("default");
+                    activeConversationId = "default";
+                    chatView.clearChat();
+                    currentSidebarTab = 0;
                 }
             }
         }
